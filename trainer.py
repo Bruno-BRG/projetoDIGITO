@@ -1,14 +1,43 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import torchvision
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import numpy as np
+import json
 from model import MNISTNet
 import os
 from PIL import Image as PILImage
+
+class FeedbackDataset(Dataset):
+    """Dataset customizado para dados de feedback do usuario"""
+    
+    def __init__(self, feedback_data, transform=None):
+        self.feedback_data = feedback_data
+        self.transform = transform
+    
+    def __len__(self):
+        return len(self.feedback_data)
+    
+    def __getitem__(self, idx):
+        entry = self.feedback_data[idx]
+        
+        # Converter lista de volta para numpy array
+        image = np.array(entry['image'], dtype=np.float32)
+        label = entry['actual_label']
+        
+        # Converter para PIL para aplicar transforms
+        if self.transform:
+            # Converter para PIL (0-255 range)
+            image_pil = PILImage.fromarray((image * 255).astype(np.uint8), mode='L')
+            image = self.transform(image_pil)
+        else:
+            # Converter para tensor manualmente
+            image = torch.FloatTensor(image).unsqueeze(0)
+        
+        return image, label
 
 class MNISTTrainer:
     """
@@ -212,13 +241,134 @@ class MNISTTrainer:
             
             image_tensor = image_tensor.to(self.device)
             output = self.model(image_tensor)
-            
-            # Probabilidades
+              # Probabilidades
             probabilities = torch.nn.functional.softmax(output, dim=1)
             confidence, predicted = torch.max(probabilities, 1)
             
             return predicted.item(), confidence.item()
     
+    def fine_tune_with_feedback(self, feedback_data, epochs=5, lr=0.0001):
+        """
+        Fine-tuning do modelo com dados de feedback do usuario
+        Aprendizado continuo baseado em correcoes humanas
+        """
+        if not feedback_data:
+            print("Nenhum feedback disponivel para fine-tuning")
+            return False
+        
+        print(f"🎯 Iniciando fine-tuning com {len(feedback_data)} exemplos de feedback")
+        
+        # Criar dataset customizado com feedback
+        images = []
+        labels = []
+        
+        for feedback in feedback_data:
+            # Converter lista de volta para array numpy
+            image_array = np.array(feedback['image'], dtype=np.float32)
+            
+            # Aplicar mesmo preprocessing
+            image_tensor = torch.from_numpy(image_array).unsqueeze(0)  # Add channel dimension
+            images.append(image_tensor)
+            labels.append(feedback['actual_label'])
+        
+        # Criar tensors
+        X = torch.stack(images)
+        y = torch.tensor(labels, dtype=torch.long)
+        
+        # Criar dataset e dataloader
+        from torch.utils.data import TensorDataset, DataLoader
+        feedback_dataset = TensorDataset(X, y)
+        feedback_loader = DataLoader(feedback_dataset, batch_size=min(16, len(feedback_data)), shuffle=True)
+        
+        # Configurar otimizador para fine-tuning (learning rate menor)
+        fine_tune_optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-5)
+        
+        print(f"📚 Fine-tuning por {epochs} epocas com lr={lr}")
+        
+        self.model.train()
+        for epoch in range(epochs):
+            total_loss = 0.0
+            correct = 0
+            total = 0
+            
+            for batch_idx, (data, target) in enumerate(feedback_loader):
+                data, target = data.to(self.device), target.to(self.device)
+                
+                fine_tune_optimizer.zero_grad()
+                output = self.model(data)
+                loss = self.criterion(output, target)
+                loss.backward()
+                fine_tune_optimizer.step()
+                
+                total_loss += loss.item()
+                pred = output.argmax(dim=1, keepdim=True)
+                correct += pred.eq(target.view_as(pred)).sum().item()
+                total += target.size(0)
+            
+            avg_loss = total_loss / len(feedback_loader)
+            accuracy = 100. * correct / total
+            
+            print(f'Fine-tune Epoca {epoch+1}/{epochs}: Loss: {avg_loss:.4f}, Acc: {accuracy:.2f}%')
+          # Salvar modelo atualizado
+        self.save_model()
+        
+        # Verificar se salvou corretamente
+        if os.path.exists(self.model_save_path):
+            print("✅ Fine-tuning concluido e modelo salvo com sucesso!")
+            return True
+        else:
+            print("❌ Erro: Modelo não foi salvo corretamente!")
+            return False
+    
+    def validate_on_feedback(self, feedback_data):
+        """
+        Valida o modelo nos dados de feedback para medir melhoria
+        """
+        if not feedback_data:
+            return 0.0
+        
+        self.model.eval()
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            for feedback in feedback_data:
+                # Preparar dados
+                image_array = np.array(feedback['image'], dtype=np.float32)
+                image_tensor = torch.from_numpy(image_array).unsqueeze(0).unsqueeze(0).to(self.device)
+                actual_label = feedback['actual_label']
+                
+                # Predicao
+                output = self.model(image_tensor)
+                pred = output.argmax(dim=1).item()
+                
+                if pred == actual_label:
+                    correct += 1
+                total += 1
+        
+        accuracy = 100. * correct / total if total > 0 else 0.0
+        return accuracy
+
+    def get_feedback_stats(self, feedback_file="feedback.json"):
+        """Retorna estatisticas dos dados de feedback"""
+        if not os.path.exists(feedback_file):
+            return {"total": 0, "correct": 0, "wrong": 0}
+        
+        with open(feedback_file, 'r') as f:
+            feedback_data = json.load(f)
+        
+        model_feedback = feedback_data.get("mnist_model", [])
+        
+        correct = sum(1 for entry in model_feedback if entry['predicted_label'] == entry['actual_label'])
+        wrong = len(model_feedback) - correct
+        
+        return {
+            "total": len(model_feedback),
+            "correct": correct,
+            "wrong": wrong,
+            "accuracy": correct / len(model_feedback) * 100 if len(model_feedback) > 0 else 0
+        }
+
     def plot_training_history(self):
         """Plota o historico de treinamento"""
         if not self.train_losses:
