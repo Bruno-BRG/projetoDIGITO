@@ -1,21 +1,37 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+MNIST Digit Recognition - Versao Ultra Simplificada
+Porque as vezes simples e melhor que complexo
+
+Criado por um senior que sabe que menos e mais
+"""
+
 import sys
 import numpy as np
 import cv2
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
-                             QWidget, QPushButton, QLabel, QTextEdit, QTabWidget,
-                             QProgressBar, QGroupBox, QGridLayout, QSpinBox,
-                             QCheckBox, QMessageBox, QFrame)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPoint
-from PyQt5.QtGui import QPainter, QPen, QPixmap, QFont, QColor
-import torch
-from model import EMNISTNet
-from trainer_improved import EMNISTTrainer
-import matplotlib.pyplot as plt
+
+# PyQt5 imports
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
+    QWidget, QPushButton, QLabel, QTabWidget,
+    QProgressBar, QGroupBox, QGridLayout, QSpinBox,
+    QMessageBox
+)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPoint
+from PyQt5.QtGui import QPainter, QPen, QPixmap, QFont
+
+# Nossos modulos
+from model import MNISTNet
+from trainer import MNISTTrainer
+
+# Matplotlib
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import string
+
 
 class TrainingThread(QThread):
+    """Thread para treinamento - nao trava a UI"""
     progress_signal = pyqtSignal(int, int, float, float, float, float)
     finished_signal = pyqtSignal()
     
@@ -25,14 +41,22 @@ class TrainingThread(QThread):
         self.trainer = None
     
     def run(self):
-        self.trainer = EMNISTTrainer()
-        self.trainer.train(epochs=self.epochs, progress_callback=self.emit_progress)
-        self.finished_signal.emit()
+        """Executa o treinamento em thread separada"""
+        try:
+            self.trainer = MNISTTrainer()
+            self.trainer.train(epochs=self.epochs, progress_callback=self.emit_progress)
+            self.finished_signal.emit()
+        except Exception as e:
+            print(f"Erro no treinamento: {e}")
     
     def emit_progress(self, epoch, total_epochs, train_loss, train_acc, test_loss, test_acc):
+        """Emite sinal de progresso"""
         self.progress_signal.emit(epoch, total_epochs, train_loss, train_acc, test_loss, test_acc)
 
+
 class DrawingCanvas(QWidget):
+    """Canvas para desenhar digitos - o mais simples possivel"""
+    
     def __init__(self, width=280, height=280):
         super().__init__()
         self.width = width
@@ -40,21 +64,23 @@ class DrawingCanvas(QWidget):
         self.setFixedSize(width, height)
         self.setStyleSheet("background-color: white; border: 2px solid black;")
         
-        # Drawing parameters
+        # Estados do desenho
         self.drawing = False
         self.brush_size = 15
         self.last_point = QPoint()
         
-        # Create pixmap for drawing
+        # Pixmap para desenho
         self.pixmap = QPixmap(width, height)
         self.pixmap.fill(Qt.white)
-        
+    
     def mousePressEvent(self, event):
+        """Inicia o desenho"""
         if event.button() == Qt.LeftButton:
             self.drawing = True
             self.last_point = event.pos()
     
     def mouseMoveEvent(self, event):
+        """Desenha durante o movimento"""
         if event.buttons() & Qt.LeftButton and self.drawing:
             painter = QPainter(self.pixmap)
             painter.setPen(QPen(Qt.black, self.brush_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
@@ -63,462 +89,474 @@ class DrawingCanvas(QWidget):
             self.update()
     
     def mouseReleaseEvent(self, event):
+        """Para o desenho"""
         if event.button() == Qt.LeftButton:
             self.drawing = False
     
     def paintEvent(self, event):
-        canvas_painter = QPainter(self)
-        canvas_painter.drawPixmap(self.rect(), self.pixmap, self.pixmap.rect())
-      def clear_canvas(self):
+        """Renderiza o canvas"""
+        painter = QPainter(self)
+        painter.drawPixmap(self.rect(), self.pixmap, self.pixmap.rect())
+    
+    def clear_canvas(self):
+        """Limpa o canvas"""
         self.pixmap.fill(Qt.white)
         self.update()
     
     def get_image_array(self):
-        # Convert pixmap to numpy array
-        image = self.pixmap.toImage()
-        width = image.width()
-        height = image.height()
+        """Retorna imagem como array numpy 28x28 - preprocessado para MNIST"""
+        # Converter QPixmap para QImage
+        qimg = self.pixmap.toImage()
+        width = qimg.width()
+        height = qimg.height()
         
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
+        # Converter para array numpy
+        ptr = qimg.bits()
+        ptr.setsize(qimg.byteCount())
         arr = np.array(ptr).reshape(height, width, 4)  # RGBA
         
-        # Convert to grayscale
+        # Converter para grayscale
         gray = cv2.cvtColor(arr, cv2.COLOR_RGBA2GRAY)
         
-        # Invert colors (black on white to white on black)
+        # Inverter cores (MNIST tem fundo preto, digito branco)
         gray = 255 - gray
         
-        # Enhanced preprocessing for better recognition
-        # 1. Apply Gaussian blur to smooth the image
-        gray = cv2.GaussianBlur(gray, (2, 2), 0)
+        # Resize para 28x28
+        resized = cv2.resize(gray, (28, 28), interpolation=cv2.INTER_AREA)
         
-        # 2. Threshold to create clean binary image
-        _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+        # Normalizar
+        normalized = resized.astype(np.float32) / 255.0
         
-        # 3. Find contours to get the main character
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Find the largest contour (main character)
-            largest_contour = max(contours, key=cv2.contourArea)
-            
-            # Get bounding rectangle
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # Add padding around the character
-            padding = max(20, min(w, h) // 4)
-            x = max(0, x - padding)
-            y = max(0, y - padding)
-            w = min(width - x, w + 2 * padding)
-            h = min(height - y, h + 2 * padding)
-            
-            # Crop to bounding rectangle
-            cropped = binary[y:y+h, x:x+w]
-            
-            # Make it square by padding with zeros
-            max_dim = max(h, w)
-            square = np.zeros((max_dim, max_dim), dtype=np.uint8)
-            
-            # Center the character in the square
-            start_y = (max_dim - h) // 2
-            start_x = (max_dim - w) // 2
-            square[start_y:start_y+h, start_x:start_x+w] = cropped
-            
-        else:
-            # If nothing is drawn, return a black square
-            square = np.zeros((100, 100), dtype=np.uint8)
-        
-        # Resize to 28x28 for EMNIST with anti-aliasing
-        resized = cv2.resize(square, (28, 28), interpolation=cv2.INTER_AREA)
-        
-        # Apply morphological operations to improve quality
-        kernel = np.ones((2, 2), np.uint8)
-        resized = cv2.morphologyEx(resized, cv2.MORPH_CLOSE, kernel)
-        
-        # Final smoothing
-        resized = cv2.GaussianBlur(resized, (1, 1), 0)
-        
-        return resized
+        return normalized
+
 
 class PlotCanvas(FigureCanvas):
+    """Canvas para plots do treinamento"""
+    
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
         super().__init__(self.fig)
         self.setParent(parent)
         
-        # Initialize empty plots
-        self.ax1 = self.fig.add_subplot(121)
-        self.ax2 = self.fig.add_subplot(122)
+        # Criar subplots
+        self.loss_ax = self.fig.add_subplot(121)
+        self.acc_ax = self.fig.add_subplot(122)
         
-        self.ax1.set_title('Loss')
-        self.ax1.set_xlabel('Epoch')
-        self.ax1.set_ylabel('Loss')
-        self.ax1.grid(True)
-        
-        self.ax2.set_title('Accuracy')
-        self.ax2.set_xlabel('Epoch')
-        self.ax2.set_ylabel('Accuracy (%)')
-        self.ax2.grid(True)
-        
-        self.fig.tight_layout()
+        # Dados dos plots
+        self.train_losses = []
+        self.train_accs = []
+        self.test_losses = []
+        self.test_accs = []
     
     def update_plots(self, train_losses, train_accs, test_losses, test_accs):
-        self.ax1.clear()
-        self.ax2.clear()
+        """Atualiza os graficos de treinamento"""
+        # Atualizar dados
+        self.train_losses = train_losses
+        self.train_accs = train_accs
+        self.test_losses = test_losses
+        self.test_accs = test_accs
         
+        # Limpar plots anteriores
+        self.loss_ax.clear()
+        self.acc_ax.clear()
+        
+        # Plot Loss
         epochs = range(1, len(train_losses) + 1)
+        self.loss_ax.plot(epochs, train_losses, 'b-', label='Train', linewidth=2)
+        self.loss_ax.plot(epochs, test_losses, 'r-', label='Test', linewidth=2)
+        self.loss_ax.set_title('Loss', fontsize=12, fontweight='bold')
+        self.loss_ax.set_xlabel('Epoca')
+        self.loss_ax.set_ylabel('Loss')
+        self.loss_ax.legend()
+        self.loss_ax.grid(True, alpha=0.3)
         
-        # Plot losses
-        self.ax1.plot(epochs, train_losses, 'b-', label='Train Loss')
-        self.ax1.plot(epochs, test_losses, 'r-', label='Test Loss')
-        self.ax1.set_title('Loss')
-        self.ax1.set_xlabel('Epoch')
-        self.ax1.set_ylabel('Loss')
-        self.ax1.legend()
-        self.ax1.grid(True)
+        # Plot Accuracy
+        self.acc_ax.plot(epochs, train_accs, 'b-', label='Train', linewidth=2)
+        self.acc_ax.plot(epochs, test_accs, 'r-', label='Test', linewidth=2)
+        self.acc_ax.set_title('Accuracy', fontsize=12, fontweight='bold')
+        self.acc_ax.set_xlabel('Epoca')
+        self.acc_ax.set_ylabel('Accuracy (%)')
+        self.acc_ax.legend()
+        self.acc_ax.grid(True, alpha=0.3)
         
-        # Plot accuracies
-        self.ax2.plot(epochs, train_accs, 'b-', label='Train Accuracy')
-        self.ax2.plot(epochs, test_accs, 'r-', label='Test Accuracy')
-        self.ax2.set_title('Accuracy')
-        self.ax2.set_xlabel('Epoch')
-        self.ax2.set_ylabel('Accuracy (%)')
-        self.ax2.legend()
-        self.ax2.grid(True)
-        
+        # Ajustar layout e redesenhar
         self.fig.tight_layout()
         self.draw()
 
+
 class MainWindow(QMainWindow):
+    """Interface principal - limpa e funcional"""
+    
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EMNIST Letter Recognition App")
-        self.setGeometry(100, 100, 1200, 800)
         
-        # Initialize model
+        # Configurar janela principal
+        self.setWindowTitle("🎯 MNIST Digit Recognition - Versao Ultra Simples")
+        self.setGeometry(100, 100, 1000, 700)
+        
+        # Inicializar componentes
         self.model = None
-        self.trainer = EMNISTTrainer()
+        self.trainer = MNISTTrainer(model_save_path='mnist_model.pth')
+        self.current_prediction = None
+        self.digit_sequence = []
+        
+        # Tentar carregar modelo existente
         self.load_existing_model()
         
-        # Create main widget and tabs
+        # Criar interface
+        self.setup_ui()
+        
+        # Aplicar estilo
+        self.setStyleSheet(self.get_stylesheet())
+    
+    def setup_ui(self):
+        """Configura a interface do usuario"""
+        # Widget principal
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         
+        # Layout principal
         layout = QVBoxLayout(main_widget)
+        
+        # Tab widget
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
         
-        # Create tabs
+        # Criar abas
         self.create_training_tab()
         self.create_recognition_tab()
-        
-        self.setStyleSheet("""
+    
+    def get_stylesheet(self):
+        """CSS simples e bonito"""
+        return """
             QMainWindow {
-                background-color: #f0f0f0;
+                background-color: #f5f5f5;
             }
             QTabWidget::pane {
-                border: 1px solid #c0c0c0;
+                border: 1px solid #ccc;
                 background-color: white;
+                border-radius: 5px;
             }
             QTabBar::tab {
                 background-color: #e0e0e0;
-                padding: 8px 16px;
+                padding: 10px 20px;
                 margin-right: 2px;
+                border-top-left-radius: 5px;
+                border-top-right-radius: 5px;
             }
             QTabBar::tab:selected {
                 background-color: white;
-                border-bottom: 2px solid #0078d4;
+                border-bottom: 3px solid #007acc;
             }
             QPushButton {
-                background-color: #0078d4;
+                background-color: #007acc;
                 color: white;
                 border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
+                padding: 10px 20px;
+                border-radius: 5px;
                 font-weight: bold;
+                font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
+                background-color: #005999;
             }
             QPushButton:disabled {
                 background-color: #cccccc;
                 color: #666666;
             }
-        """)
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                margin: 5px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+            QLabel {
+                font-size: 11px;
+            }
+        """
     
     def create_training_tab(self):
+        """Cria a aba de treinamento"""
         training_tab = QWidget()
-        self.tab_widget.addTab(training_tab, "Training")
+        self.tab_widget.addTab(training_tab, "🚀 Treinamento")
         
         layout = QVBoxLayout(training_tab)
         
-        # Training controls
-        controls_group = QGroupBox("Training Controls")
+        # Grupo de controles
+        controls_group = QGroupBox("Parametros de Treinamento")
         controls_layout = QGridLayout(controls_group)
         
-        # Epochs selection
-        controls_layout.addWidget(QLabel("Epochs:"), 0, 0)
+        # Numero de epocas
+        controls_layout.addWidget(QLabel("Epocas:"), 0, 0)
         self.epochs_spinbox = QSpinBox()
-        self.epochs_spinbox.setMinimum(1)
-        self.epochs_spinbox.setMaximum(100)
-        self.epochs_spinbox.setValue(20)
+        self.epochs_spinbox.setRange(1, 50)
+        self.epochs_spinbox.setValue(10)
         controls_layout.addWidget(self.epochs_spinbox, 0, 1)
         
-        # Training button
-        self.train_button = QPushButton("Start Training")
-        self.train_button.clicked.connect(self.start_training)
-        controls_layout.addWidget(self.train_button, 0, 2)
+        # Status do modelo
+        self.model_status_label = QLabel()
+        self.update_model_status()
+        controls_layout.addWidget(self.model_status_label, 1, 0, 1, 2)
         
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        controls_layout.addWidget(self.progress_bar, 1, 0, 1, 3)
+        # Botao de treinamento
+        self.train_button = QPushButton("Iniciar Treinamento")
+        self.train_button.clicked.connect(self.start_training)
+        controls_layout.addWidget(self.train_button, 2, 0, 1, 2)
         
         layout.addWidget(controls_group)
         
-        # Training info
-        info_group = QGroupBox("Training Information")
-        info_layout = QVBoxLayout(info_group)
+        # Barra de progresso
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #007acc;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
         
-        self.training_info = QTextEdit()
-        self.training_info.setMaximumHeight(150)
-        self.training_info.setReadOnly(True)
-        info_layout.addWidget(self.training_info)
+        # Status de treinamento
+        self.training_status = QLabel("Pronto para treinar")
+        layout.addWidget(self.training_status)
         
-        layout.addWidget(info_group)
-        
-        # Plot canvas
-        plot_group = QGroupBox("Training Progress")
-        plot_layout = QVBoxLayout(plot_group)
-        
+        # Canvas de plots
         self.plot_canvas = PlotCanvas()
-        plot_layout.addWidget(self.plot_canvas)
-        
-        layout.addWidget(plot_group)
+        layout.addWidget(self.plot_canvas)
     
     def create_recognition_tab(self):
+        """Cria a aba de reconhecimento"""
         recognition_tab = QWidget()
-        self.tab_widget.addTab(recognition_tab, "Letter Recognition")
+        self.tab_widget.addTab(recognition_tab, "🎨 Reconhecimento")
         
         layout = QHBoxLayout(recognition_tab)
         
-        # Left side - Drawing area
-        left_group = QGroupBox("Draw Here")
-        left_layout = QVBoxLayout(left_group)
+        # Grupo do canvas de desenho
+        canvas_group = QGroupBox("Desenhe um digito (0-9)")
+        canvas_layout = QVBoxLayout(canvas_group)
         
+        # Canvas de desenho
         self.drawing_canvas = DrawingCanvas()
-        left_layout.addWidget(self.drawing_canvas, alignment=Qt.AlignCenter)
+        canvas_layout.addWidget(self.drawing_canvas)
         
-        # Controls for drawing
-        controls_layout = QHBoxLayout()
+        # Botoes do canvas
+        canvas_buttons = QHBoxLayout()
         
-        self.clear_button = QPushButton("Clear")
-        self.clear_button.clicked.connect(self.clear_drawing)
-        controls_layout.addWidget(self.clear_button)
+        clear_button = QPushButton("🗑️ Limpar")
+        clear_button.clicked.connect(self.clear_drawing)
+        canvas_buttons.addWidget(clear_button)
         
-        self.recognize_button = QPushButton("Recognize Letter")
-        self.recognize_button.clicked.connect(self.recognize_letter)
-        controls_layout.addWidget(self.recognize_button)
+        recognize_button = QPushButton("🔍 Reconhecer")
+        recognize_button.clicked.connect(self.recognize_digit)
+        canvas_buttons.addWidget(recognize_button)
         
-        left_layout.addLayout(controls_layout)
-        layout.addWidget(left_group)
+        canvas_layout.addLayout(canvas_buttons)
+        layout.addWidget(canvas_group)
         
-        # Right side - Results
-        right_group = QGroupBox("Recognition Results")
-        right_layout = QVBoxLayout(right_group)
+        # Grupo de resultados
+        results_group = QGroupBox("Resultado")
+        results_layout = QVBoxLayout(results_group)
         
-        # Prediction result
-        self.prediction_label = QLabel("Draw a letter and click 'Recognize Letter'")
+        # Label de predicao
+        self.prediction_label = QLabel("Desenhe um digito e clique em 'Reconhecer'")
         self.prediction_label.setFont(QFont("Arial", 24, QFont.Bold))
         self.prediction_label.setAlignment(Qt.AlignCenter)
-        self.prediction_label.setStyleSheet("color: #0078d4; padding: 20px; border: 2px solid #0078d4; border-radius: 8px;")
-        right_layout.addWidget(self.prediction_label)
+        self.prediction_label.setStyleSheet("color: #333; padding: 20px;")
+        results_layout.addWidget(self.prediction_label)
         
-        # Confidence
+        # Label de confianca
         self.confidence_label = QLabel("")
-        self.confidence_label.setFont(QFont("Arial", 14))
         self.confidence_label.setAlignment(Qt.AlignCenter)
-        right_layout.addWidget(self.confidence_label)
+        self.confidence_label.setFont(QFont("Arial", 12))
+        results_layout.addWidget(self.confidence_label)
         
-        # Word formation
-        word_group = QGroupBox("Word Formation")
-        word_layout = QVBoxLayout(word_group)
+        # Sequencia de digitos
+        self.word_label = QLabel("Digitos: ")
+        self.word_label.setFont(QFont("Arial", 16))
+        self.word_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
+        results_layout.addWidget(self.word_label)
         
-        self.word_display = QLabel("")
-        self.word_display.setFont(QFont("Arial", 18, QFont.Bold))
-        self.word_display.setAlignment(Qt.AlignCenter)
-        self.word_display.setStyleSheet("border: 1px solid #ccc; padding: 10px; background-color: #f9f9f9;")
-        word_layout.addWidget(self.word_display)
+        # Botoes da sequencia
+        word_buttons = QHBoxLayout()
         
-        word_controls = QHBoxLayout()
+        add_digit_button = QPushButton("➕ Adicionar")
+        add_digit_button.clicked.connect(self.add_digit_to_sequence)
+        word_buttons.addWidget(add_digit_button)
         
-        self.add_letter_button = QPushButton("Add to Word")
-        self.add_letter_button.clicked.connect(self.add_letter_to_word)
-        self.add_letter_button.setEnabled(False)
-        word_controls.addWidget(self.add_letter_button)
+        clear_word_button = QPushButton("🗑️ Limpar Sequencia")
+        clear_word_button.clicked.connect(self.clear_sequence)
+        word_buttons.addWidget(clear_word_button)
         
-        self.clear_word_button = QPushButton("Clear Word")
-        self.clear_word_button.clicked.connect(self.clear_word)
-        word_controls.addWidget(self.clear_word_button)
-        
-        word_layout.addLayout(word_controls)
-        right_layout.addWidget(word_group)
-        
-        # Model status
-        self.model_status_label = QLabel()
-        self.update_model_status()
-        right_layout.addWidget(self.model_status_label)
-        
-        layout.addWidget(right_group)
-        
-        # Initialize word tracking
-        self.current_word = ""
-        self.last_prediction = ""
+        results_layout.addLayout(word_buttons)
+        layout.addWidget(results_group)
     
     def load_existing_model(self):
-        """Try to load existing model"""
-        if self.trainer.load_model():
-            self.model = self.trainer.model
-            return True
-        return False
+        """Carrega modelo existente se disponivel"""
+        try:
+            if self.trainer.load_model():
+                self.model = self.trainer.model
+                print("✅ Modelo carregado com sucesso!")
+            else:
+                print("ℹ️ Nenhum modelo salvo encontrado")
+        except Exception as e:
+            print(f"❌ Erro ao carregar modelo: {e}")
     
     def update_model_status(self):
+        """Atualiza o status do modelo"""
         if self.model is not None:
-            self.model_status_label.setText("✅ Model loaded and ready")
+            self.model_status_label.setText("✅ Modelo carregado e pronto")
             self.model_status_label.setStyleSheet("color: green; font-weight: bold;")
         else:
-            self.model_status_label.setText("❌ No trained model available. Please train the model first.")
+            self.model_status_label.setText("❌ Nenhum modelo treinado")
             self.model_status_label.setStyleSheet("color: red; font-weight: bold;")
     
     def start_training(self):
+        """Inicia o treinamento"""
         epochs = self.epochs_spinbox.value()
         
-        # Disable training button
+        # Desabilitar botao
         self.train_button.setEnabled(False)
-        self.epochs_spinbox.setEnabled(False)
+        self.training_status.setText(f"Iniciando treinamento por {epochs} epocas...")
         
-        # Clear training info
-        self.training_info.clear()
-        self.training_info.append("Starting training...")
-        
-        # Reset progress bar
-        self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(epochs)
-        
-        # Start training thread
+        # Criar e iniciar thread de treinamento
         self.training_thread = TrainingThread(epochs)
         self.training_thread.progress_signal.connect(self.update_training_progress)
         self.training_thread.finished_signal.connect(self.training_finished)
         self.training_thread.start()
     
     def update_training_progress(self, epoch, total_epochs, train_loss, train_acc, test_loss, test_acc):
-        # Update progress bar
-        self.progress_bar.setValue(epoch)
+        """Atualiza o progresso do treinamento"""
+        # Atualizar barra de progresso
+        progress = int((epoch / total_epochs) * 100)
+        self.progress_bar.setValue(progress)
         
-        # Update training info
-        info_text = f"Epoch {epoch}/{total_epochs}:\n"
-        info_text += f"  Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%\n"
-        info_text += f"  Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%\n"
+        # Atualizar status
+        status = f"Epoca {epoch}/{total_epochs} - "
+        status += f"Train: {train_acc:.1f}% ({train_loss:.4f}) - "
+        status += f"Test: {test_acc:.1f}% ({test_loss:.4f})"
+        self.training_status.setText(status)
         
-        self.training_info.append(info_text)
-        self.training_info.ensureCursorVisible()
-        
-        # Update plots if we have training history
+        # Atualizar plots se disponivel
         if hasattr(self.training_thread.trainer, 'train_losses'):
-            trainer = self.training_thread.trainer
             self.plot_canvas.update_plots(
-                trainer.train_losses,
-                trainer.train_accuracies,
-                trainer.test_losses,
-                trainer.test_accuracies
+                self.training_thread.trainer.train_losses,
+                self.training_thread.trainer.train_accuracies,
+                self.training_thread.trainer.test_losses,
+                self.training_thread.trainer.test_accuracies
             )
     
     def training_finished(self):
-        # Re-enable training controls
+        """Finaliza o treinamento"""
+        # Reabilitar botao
         self.train_button.setEnabled(True)
-        self.epochs_spinbox.setEnabled(True)
+        self.training_status.setText("✅ Treinamento concluido!")
+        self.progress_bar.setValue(100)
         
-        # Update model
-        self.model = self.training_thread.trainer.model
+        # Atualizar referencias do modelo
         self.trainer = self.training_thread.trainer
-        
-        # Update model status
+        self.model = self.trainer.model
         self.update_model_status()
         
-        # Show completion message
-        self.training_info.append("\n✅ Training completed successfully!")
-        self.training_info.append("Model saved and ready for recognition.")
-        
-        QMessageBox.information(self, "Training Complete", "Model training completed successfully!")
+        # Mostrar mensagem de sucesso
+        QMessageBox.information(self, "Sucesso", "Treinamento concluido com sucesso!")
     
     def clear_drawing(self):
+        """Limpa o canvas de desenho"""
         self.drawing_canvas.clear_canvas()
-        self.prediction_label.setText("Draw a letter and click 'Recognize Letter'")
+        self.prediction_label.setText("Desenhe um digito e clique em 'Reconhecer'")
         self.confidence_label.setText("")
-        self.add_letter_button.setEnabled(False)
     
-    def recognize_letter(self):
+    def recognize_digit(self):
+        """Reconhece o digito desenhado"""
         if self.model is None:
-            QMessageBox.warning(self, "No Model", "Please train the model first before recognition.")
+            QMessageBox.warning(
+                self, 
+                "Erro", 
+                "Nenhum modelo treinado!\n\nVa para a aba 'Treinamento' e treine o modelo primeiro."
+            )
             return
         
-        # Get image from canvas
-        image_array = self.drawing_canvas.get_image_array()
-        
-        # Debug: Save the preprocessed image to see what the model receives
-        debug_path = "debug_preprocessed.png"
-        cv2.imwrite(debug_path, image_array)
-        print(f"Debug: Preprocessed image saved to {debug_path}")
-        
+        # Obter imagem do canvas
         try:
-            # Predict letter
-            letter, confidence = self.trainer.predict(image_array)
+            image = self.drawing_canvas.get_image_array()
             
-            # Only show prediction if confidence is reasonable
-            if confidence > 0.1:  # 10% minimum confidence
-                self.prediction_label.setText(f"Predicted Letter: {letter}")
-                self.confidence_label.setText(f"Confidence: {confidence:.2%}")
-                
-                # Color code based on confidence
-                if confidence > 0.7:
-                    color = "#28a745"  # Green for high confidence
-                elif confidence > 0.4:
-                    color = "#ffc107"  # Yellow for medium confidence
-                else:
-                    color = "#dc3545"  # Red for low confidence
-                
-                self.prediction_label.setStyleSheet(f"color: {color}; padding: 20px; border: 2px solid {color}; border-radius: 8px;")
-                
-                # Store prediction for word formation
-                self.last_prediction = letter
-                self.add_letter_button.setEnabled(True)
+            # Fazer predicao
+            predicted_digit, confidence = self.trainer.predict(image)
+            
+            # Armazenar predicao atual
+            self.current_prediction = predicted_digit
+            
+            # Mostrar resultado
+            self.prediction_label.setText(f"Digito: {predicted_digit}")
+            self.confidence_label.setText(f"Confianca: {confidence:.1%}")
+            
+            # Colorir baseado na confianca
+            if confidence > 0.8:
+                color = "green"
+                emoji = "🎯"
+            elif confidence > 0.5:
+                color = "orange"
+                emoji = "⚠️"
             else:
-                self.prediction_label.setText("Unable to recognize - try drawing clearer")
-                self.confidence_label.setText(f"Confidence too low: {confidence:.2%}")
-                self.prediction_label.setStyleSheet("color: #dc3545; padding: 20px; border: 2px solid #dc3545; border-radius: 8px;")
-                self.add_letter_button.setEnabled(False)
-                
+                color = "red"
+                emoji = "❓"
+            
+            self.prediction_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+            self.confidence_label.setText(f"{emoji} Confianca: {confidence:.1%}")
+            
         except Exception as e:
-            QMessageBox.critical(self, "Recognition Error", f"Error during recognition: {str(e)}")
-            print(f"Recognition error: {str(e)}")
+            QMessageBox.critical(self, "Erro", f"Erro na predicao:\n{str(e)}")
     
-    def add_letter_to_word(self):
-        if self.last_prediction:
-            self.current_word += self.last_prediction
-            self.word_display.setText(self.current_word)
+    def add_digit_to_sequence(self):
+        """Adiciona o digito atual a sequencia"""
+        if self.current_prediction is not None:
+            self.digit_sequence.append(str(self.current_prediction))
+            sequence_text = "".join(self.digit_sequence)
+            self.word_label.setText(f"Digitos: {sequence_text}")
+        else:
+            QMessageBox.information(self, "Info", "Reconheca um digito primeiro!")
     
-    def clear_word(self):
-        self.current_word = ""
-        self.word_display.setText("")
+    def clear_sequence(self):
+        """Limpa a sequencia de digitos"""
+        self.digit_sequence = []
+        self.word_label.setText("Digitos: ")
+
 
 def main():
+    """Funcao principal"""
+    print("🚀 Iniciando MNIST Digit Recognition...")
+    
+    # Criar aplicacao
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+    
+    # Configurar fonte padrao
+    font = QFont("Arial", 10)
+    app.setFont(font)
+    
+    # Criar e mostrar janela principal
+    try:
+        window = MainWindow()
+        window.show()
+        print("✅ Interface carregada com sucesso!")
+        
+        # Executar aplicacao
+        sys.exit(app.exec_())
+        
+    except Exception as e:
+        print(f"❌ Erro ao inicializar: {e}")
+        import traceback
+        traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()
