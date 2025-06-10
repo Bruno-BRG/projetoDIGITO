@@ -1,190 +1,269 @@
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, SubsetRandomSampler
-from torchvision import datasets, transforms
-from sklearn.model_selection import KFold
+from torch.utils.data import DataLoader
+import torchvision
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
 import numpy as np
+from model import EMNISTNet
 import os
-from model import MNISTNet
 
-class MNISTTrainer:
-    def __init__(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = None
-        self.train_dataset = None
-        self.test_dataset = None
-        self.load_data()
-    
-    def load_data(self):
-        transform = transforms.Compose([
+class EMNISTTrainer:    def __init__(self, model_save_path='emnist_model.pth'):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = EMNISTNet(num_classes=26).to(self.device)
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Label smoothing for better generalization
+        
+        # Better optimizer with improved parameters
+        self.optimizer = optim.AdamW(
+            self.model.parameters(), 
+            lr=0.001, 
+            weight_decay=0.01,
+            betas=(0.9, 0.999)
+        )
+        
+        # Cosine annealing with warm restarts
+        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer, T_0=10, T_mult=2, eta_min=1e-6
+        )
+        
+        self.model_save_path = model_save_path
+          # Data transformations for EMNIST letters with augmentation
+        # EMNIST letters need to be rotated and flipped to match standard orientation
+        self.train_transform = transforms.Compose([
             transforms.ToTensor(),
+            transforms.Lambda(lambda x: torch.rot90(x, k=3, dims=[1, 2])),  # Rotate 270 degrees
+            transforms.Lambda(lambda x: torch.flip(x, dims=[2])),  # Flip horizontally
+            transforms.RandomRotation(degrees=10),  # Slight random rotation
+            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),  # Random shifts and scaling
             transforms.Normalize((0.1307,), (0.3081,))
         ])
         
-        # Check if dataset already exists
-        data_dir = './data'
-        train_exists = os.path.exists(os.path.join(data_dir, 'MNIST', 'raw', 'train-images-idx3-ubyte'))
-        test_exists = os.path.exists(os.path.join(data_dir, 'MNIST', 'raw', 't10k-images-idx3-ubyte'))
+        # Test transform without augmentation
+        self.test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: torch.rot90(x, k=3, dims=[1, 2])),  # Rotate 270 degrees
+            transforms.Lambda(lambda x: torch.flip(x, dims=[2])),  # Flip horizontally
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
         
-        # Only download if not already present
-        download_needed = not (train_exists and test_exists)
+        # Transform for user drawn images (without rotation/flip)
+        self.inference_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+          # Load datasets
+        self.train_dataset = torchvision.datasets.EMNIST(
+            root='./data', 
+            split='letters',
+            train=True, 
+            download=True, 
+            transform=self.train_transform  # Use augmented transform for training
+        )
         
-        if download_needed:
-            print("MNIST dataset not found. Downloading...")
-        else:
-            print("MNIST dataset found. Loading existing data...")
+        self.test_dataset = torchvision.datasets.EMNIST(
+            root='./data',
+            split='letters', 
+            train=False, 
+            download=True, 
+            transform=self.test_transform  # Use non-augmented transform for testing
+        )
         
-        self.train_dataset = datasets.MNIST(data_dir, train=True, download=download_needed, transform=transform)
-        self.test_dataset = datasets.MNIST(data_dir, train=False, download=download_needed, transform=transform)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=128, shuffle=True)
+        self.test_loader = DataLoader(self.test_dataset, batch_size=128, shuffle=False)
         
-        print(f"Dataset loaded successfully. Train: {len(self.train_dataset)}, Test: {len(self.test_dataset)}")
+        # Training history
+        self.train_losses = []
+        self.train_accuracies = []
+        self.test_losses = []
+        self.test_accuracies = []
     
-    def create_model(self, hidden_size=128, dropout_rate=0.2):
-        self.model = MNISTNet(hidden_size, dropout_rate).to(self.device)
-        return self.model
-    
-    def train_epoch(self, model, train_loader, optimizer, epoch):
-        model.train()
-        total_loss = 0
+    def train_epoch(self):
+        self.model.train()
+        running_loss = 0.0
         correct = 0
         total = 0
         
-        for batch_idx, (data, target) in enumerate(train_loader):
+        for batch_idx, (data, target) in enumerate(self.train_loader):
             data, target = data.to(self.device), target.to(self.device)
-            optimizer.zero_grad()
-            output = model(data)
-            loss = F.nll_loss(output, target)
-            loss.backward()
-            optimizer.step()
             
-            total_loss += loss.item()
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
+            # Adjust target labels (EMNIST letters are 1-26, we need 0-25)
+            target = target - 1
+            
+            self.optimizer.zero_grad()
+            output = self.model(data)
+            loss = self.criterion(output, target)
+            loss.backward()
+            self.optimizer.step()
+            
+            running_loss += loss.item()
+            _, predicted = torch.max(output.data, 1)
             total += target.size(0)
+            correct += (predicted == target).sum().item()
         
-        accuracy = 100. * correct / total
-        avg_loss = total_loss / len(train_loader)
-        return avg_loss, accuracy
+        epoch_loss = running_loss / len(self.train_loader)
+        epoch_acc = 100. * correct / total
+        
+        return epoch_loss, epoch_acc
     
-    def validate(self, model, val_loader):
-        model.eval()
-        val_loss = 0
+    def test_epoch(self):
+        self.model.eval()
+        test_loss = 0
         correct = 0
         total = 0
         
         with torch.no_grad():
-            for data, target in val_loader:
+            for data, target in self.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
-                output = model(data)
-                val_loss += F.nll_loss(output, target, reduction='sum').item()
-                pred = output.argmax(dim=1, keepdim=True)
-                correct += pred.eq(target.view_as(pred)).sum().item()
+                
+                # Adjust target labels
+                target = target - 1
+                
+                output = self.model(data)
+                test_loss += self.criterion(output, target).item()
+                _, predicted = torch.max(output.data, 1)
                 total += target.size(0)
+                correct += (predicted == target).sum().item()
         
-        val_loss /= total
-        accuracy = 100. * correct / total
-        return val_loss, accuracy
+        test_loss /= len(self.test_loader)
+        test_acc = 100. * correct / total
+        
+        return test_loss, test_acc
     
-    def train_with_kfold(self, k_folds=5, epochs=10, learning_rate=0.001, 
-                        batch_size=64, hidden_size=128, dropout_rate=0.2, 
-                        progress_callback=None):
+    def train(self, epochs=20, progress_callback=None):
+        print(f'Training on {self.device}')
+        print(f'Training set size: {len(self.train_dataset)}')
+        print(f'Test set size: {len(self.test_dataset)}')
         
-        kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
-        results = []
+        best_test_acc = 0.0
         
-        # Get indices for k-fold split
-        dataset_size = len(self.train_dataset)
-        indices = list(range(dataset_size))
-        
-        for fold, (train_ids, val_ids) in enumerate(kfold.split(indices)):
+        for epoch in range(epochs):
+            # Training
+            train_loss, train_acc = self.train_epoch()
+            
+            # Testing
+            test_loss, test_acc = self.test_epoch()
+            
+            # Learning rate scheduling based on test accuracy
+            self.scheduler.step(test_acc)
+            
+            # Store metrics
+            self.train_losses.append(train_loss)
+            self.train_accuracies.append(train_acc)
+            self.test_losses.append(test_loss)
+            self.test_accuracies.append(test_acc)
+            
+            print(f'Epoch {epoch+1}/{epochs}:')
+            print(f'  Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
+            print(f'  Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%')
+            
+            # Save best model
+            if test_acc > best_test_acc:
+                best_test_acc = test_acc
+                self.save_model()
+                print(f'  New best model saved with test accuracy: {best_test_acc:.2f}%')
+            
+            # Call progress callback if provided
             if progress_callback:
-                progress_callback(f"Starting fold {fold + 1}/{k_folds}")
-            
-            # Create data samplers and loaders for this fold
-            train_sampler = SubsetRandomSampler(train_ids)
-            val_sampler = SubsetRandomSampler(val_ids)
-            
-            train_loader = DataLoader(self.train_dataset, batch_size=batch_size, sampler=train_sampler)
-            val_loader = DataLoader(self.train_dataset, batch_size=batch_size, sampler=val_sampler)
-            
-            # Create new model for this fold
-            model = MNISTNet(hidden_size, dropout_rate).to(self.device)
-            optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-            
-            fold_results = {
-                'fold': fold + 1,
-                'train_losses': [],
-                'train_accuracies': [],
-                'val_losses': [],
-                'val_accuracies': []
-            }
-            
-            # Training loop for this fold
-            for epoch in range(epochs):
-                train_loss, train_acc = self.train_epoch(model, train_loader, optimizer, epoch)
-                val_loss, val_acc = self.validate(model, val_loader)
-                
-                fold_results['train_losses'].append(train_loss)
-                fold_results['train_accuracies'].append(train_acc)
-                fold_results['val_losses'].append(val_loss)
-                fold_results['val_accuracies'].append(val_acc)
-                
-                if progress_callback:
-                    progress_callback(f"Fold {fold + 1}, Epoch {epoch + 1}: "
-                                    f"Train Acc: {train_acc:.2f}%, Val Acc: {val_acc:.2f}%")
-            
-            results.append(fold_results)
-            
-            # Save the model from the last fold as the final model
-            if fold == k_folds - 1:
-                self.model = model
+                progress_callback(epoch + 1, epochs, train_loss, train_acc, test_loss, test_acc)
         
-        return results
+        print(f'Training completed. Best test accuracy: {best_test_acc:.2f}%')
     
-    def test_model(self, model=None):
-        if model is None:
-            model = self.model
-        
-        if model is None:
-            return None, None
-        test_loader = DataLoader(self.test_dataset, batch_size=1000, shuffle=False)
-        test_loss, test_accuracy = self.validate(model, test_loader)
-        return test_loss, test_accuracy
+    def save_model(self):
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'train_losses': self.train_losses,
+            'train_accuracies': self.train_accuracies,
+            'test_losses': self.test_losses,
+            'test_accuracies': self.test_accuracies
+        }, self.model_save_path)
     
-    def predict_single(self, image_tensor, model=None):
-        if model is None:
-            model = self.model
+    def load_model(self, model_path=None):
+        if model_path is None:
+            model_path = self.model_save_path
         
-        if model is None:
-            return None, None
+        if os.path.exists(model_path):
+            checkpoint = torch.load(model_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            # Load training history if available
+            if 'train_losses' in checkpoint:
+                self.train_losses = checkpoint['train_losses']
+                self.train_accuracies = checkpoint['train_accuracies']
+                self.test_losses = checkpoint['test_losses']
+                self.test_accuracies = checkpoint['test_accuracies']
+            
+            print(f'Model loaded from {model_path}')
+            return True
+        else:
+            print(f'No model found at {model_path}')
+            return False
+    
+    def plot_training_history(self):
+        if not self.train_losses:
+            print("No training history available")
+            return
         
-        model.eval()
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+        
+        # Plot loss
+        ax1.plot(self.train_losses, label='Train Loss')
+        ax1.plot(self.test_losses, label='Test Loss')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Loss')
+        ax1.set_title('Training and Test Loss')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # Plot accuracy
+        ax2.plot(self.train_accuracies, label='Train Accuracy')
+        ax2.plot(self.test_accuracies, label='Test Accuracy')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Accuracy (%)')
+        ax2.set_title('Training and Test Accuracy')
+        ax2.legend()
+        ax2.grid(True)
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def predict(self, image):
+        """Predict a single image"""
+        self.model.eval()
         with torch.no_grad():
+            if isinstance(image, np.ndarray):
+                # Convert numpy array to PIL Image for consistent preprocessing
+                from PIL import Image as PILImage
+                if image.dtype != np.uint8:
+                    image = (image * 255).astype(np.uint8)
+                pil_image = PILImage.fromarray(image, mode='L')
+                
+                # Apply the inference transform (without rotation/flip)
+                image_tensor = self.inference_transform(pil_image)
+            else:
+                image_tensor = image
+            
+            if len(image_tensor.shape) == 2:
+                image_tensor = image_tensor.unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
+            elif len(image_tensor.shape) == 3:
+                image_tensor = image_tensor.unsqueeze(0)  # Add batch dimension
+            
             image_tensor = image_tensor.to(self.device)
-            if len(image_tensor.shape) == 3:
-                image_tensor = image_tensor.unsqueeze(0)
+            output = self.model(image_tensor)
             
-            output = model(image_tensor)
-            prediction = output.argmax(dim=1, keepdim=True).item()
-            confidence = F.softmax(output, dim=1).max().item()
+            # Get probabilities
+            probabilities = torch.nn.functional.softmax(output, dim=1)
+            confidence, predicted = torch.max(probabilities, 1)
             
-        return prediction, confidence
-    
-    def save_model(self, filepath):
-        if self.model is not None:
-            torch.save({
-                'model_state_dict': self.model.state_dict(),
-                'model_config': {
-                    'hidden_size': self.model.fc1.out_features,
-                    'dropout_rate': 0.2  # Default value, could be made configurable
-                }
-            }, filepath)
-    
-    def load_model(self, filepath):
-        checkpoint = torch.load(filepath, map_location=self.device)
-        config = checkpoint.get('model_config', {'hidden_size': 128, 'dropout_rate': 0.2})
-        
-        self.model = MNISTNet(config['hidden_size'], config['dropout_rate']).to(self.device)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        return self.model
+            # Convert back to letter (0-25 -> A-Z)
+            letter_idx = predicted.cpu().numpy()[0]
+            letter = chr(ord('A') + letter_idx)
+            confidence_value = confidence.cpu().numpy()[0]
+            
+            return letter, confidence_value
+
+if __name__ == "__main__":
+    trainer = EMNISTTrainer()
+    trainer.train(epochs=20)

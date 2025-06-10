@@ -1,115 +1,87 @@
-# MNIST Neural Network Classifier
+# EMNIST Letter Recognition App
 
-A PyQt5 application for training and testing neural networks on the MNIST digit recognition dataset using PyTorch.
-
-## Key Features
-
-- **Smart Dataset Management**: Automatically checks if MNIST dataset exists and downloads only if needed
-- **K-Fold Cross Validation**: Robust model evaluation with configurable folds
-- **Interactive GUI**: Professional PyQt5 interface with real-time updates
-- **Image Carousel**: Browse and test individual images with confidence visualization
+A PyTorch + PyQt5 application for training neural networks on the EMNIST dataset and recognizing handwritten letters.
 
 ## Features
 
-### Training Tab
-- **Hyperparameter Adjustment**: Configure K-folds, epochs, learning rate, batch size, hidden layer size, and dropout rate
-- **K-Fold Cross Validation**: Implements K-fold cross-validation for robust model evaluation
-- **Real-time Training Progress**: Live updates of training progress and metrics
-- **Results Visualization**: Interactive plots showing training/validation loss and accuracy across all folds
-- **Model Save/Load**: Save trained models and load them for later use
+1. **Neural Network Training**: Train a CNN model on the EMNIST letters dataset
+2. **Interactive Drawing**: Draw letters with your mouse on a digital canvas
+3. **Real-time Recognition**: Recognize drawn letters using the trained model
+4. **Word Formation**: Combine recognized letters to form words
+5. **Training Visualization**: View training progress with real-time plots
 
-### Testing Tab
-- **Image Carousel**: Browse through MNIST test images using slider or navigation buttons
-- **Real-time Prediction**: Test the trained model on selected images
-- **Confidence Visualization**: View prediction confidence and probability distribution
-- **Custom Image Support**: Load and test your own handwritten digit images
-- **Correctness Indication**: Visual feedback showing if predictions are correct or incorrect
+## Installation
 
-## Requirements
-
-Install the required packages using:
+1. Clone this repository
+2. Install the required dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Required packages:
-- torch>=2.0.0
-- torchvision>=0.15.0
-- PyQt5>=5.15.0
-- numpy>=1.21.0
-- matplotlib>=3.5.0
-- scikit-learn>=1.0.0
-- Pillow>=8.3.0
-
 ## Usage
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+1. Run the application:
 
-2. **Run the Application**:
-   ```bash
-   python main.py
-   ```
+```bash
+python main.py
+```
 
-3. **Training a Model**:
-   - Go to the "Training" tab
-   - Adjust hyperparameters as desired
-   - Click "Start Training"
-   - Monitor progress and view results
-   - Save the trained model
+2. **Training Tab**:
+   - Set the number of epochs (default: 20)
+   - Click "Start Training" to train the model on EMNIST dataset
+   - Monitor training progress with real-time loss and accuracy plots
+   - The trained model will be automatically saved
 
-4. **Testing the Model**:
-   - Go to the "Testing" tab
-   - Use the carousel to select test images
-   - Click "Test Current Image" to see predictions
-   - View probability distributions and confidence scores
-   - Load custom images for testing
+3. **Letter Recognition Tab**:
+   - Draw a letter on the white canvas using your mouse
+   - Click "Recognize Letter" to predict the drawn letter
+   - View the prediction confidence
+   - Add recognized letters to form words
+   - Clear the canvas or word as needed
 
 ## Model Architecture
 
 The neural network uses a CNN architecture with:
-- 2 Convolutional layers (32 and 64 filters)
+- 3 Convolutional layers with batch normalization
 - Max pooling and dropout for regularization
-- 2 Fully connected layers
-- Configurable hidden layer size and dropout rate
+- 3 Fully connected layers
+- Optimized for 26-class letter classification (A-Z)
 
-## File Structure
+## Dataset
+
+The application uses the EMNIST Letters dataset, which contains:
+- 145,600 training samples
+- 24,000 test samples
+- 28x28 grayscale images of handwritten letters
+
+## Files Structure
 
 - `main.py`: Main application with PyQt5 GUI
-- `model.py`: Neural network model definition
-- `trainer.py`: Training logic with K-fold cross-validation
+- `model.py`: Neural network architecture definition
+- `trainer.py`: Training logic and model management
 - `requirements.txt`: Required Python packages
-- `data/`: MNIST dataset (downloaded automatically)
+- `emnist_model.pth`: Saved model weights (created after training)
 
-## Features in Detail
+## Requirements
 
-### K-Fold Cross Validation
-The application implements K-fold cross-validation to provide more robust model evaluation. The training data is split into K folds, and the model is trained K times, each time using a different fold as validation data.
+- Python 3.7+
+- PyTorch
+- PyQt5
+- NumPy
+- OpenCV
+- Matplotlib
+- scikit-learn
 
-### Hyperparameter Tuning
-Users can adjust:
-- **K-Folds**: Number of folds for cross-validation (2-10)
-- **Epochs**: Number of training epochs (1-100)
-- **Learning Rate**: Adam optimizer learning rate (0.0001-1.0)
-- **Batch Size**: Training batch size (16, 32, 64, 128, 256)
-- **Hidden Size**: Size of the hidden layer (32-512)
-- **Dropout Rate**: Dropout probability for regularization (0.0-0.9)
+## Tips for Best Results
 
-### Interactive Testing
-The testing interface provides:
-- Image carousel with 100 test images
-- Real-time prediction with confidence scores
-- Probability distribution visualization
-- Support for custom image upload
-- Visual feedback for correct/incorrect predictions
+1. **Drawing**: Draw letters clearly and try to center them in the canvas
+2. **Training**: More epochs generally lead to better accuracy (try 20-50 epochs)
+3. **Recognition**: The model works best with letters similar to the EMNIST training style
+4. **Word Formation**: Letters are combined left-to-right as you recognize them
 
-## GPU Support
+## Troubleshooting
 
-The application automatically detects and uses CUDA if available, falling back to CPU if not.
-
-## License
-
-MIT License - see LICENSE file for details.
+- If CUDA is available, training will use GPU acceleration
+- The EMNIST dataset will be downloaded automatically on first run
+- Model weights are saved automatically after training completion

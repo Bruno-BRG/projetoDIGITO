@@ -1,0 +1,30 @@
+# Dataset files
+data/EMNIST/raw/
+data/MNIST/raw/
+
+# Model files
+*.pth
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+temp_image.png
+*.tmp
