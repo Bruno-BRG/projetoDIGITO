@@ -3,7 +3,7 @@ data/EMNIST/raw/
 data/MNIST/raw/
 
 # Model files
-*.pth
+
 
 # Python cache
 __pycache__/

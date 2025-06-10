@@ -397,27 +397,26 @@ class MainWindow(QMainWindow):
                 border: 1px solid #ccc;
                 background-color: white;
                 border-radius: 8px;
-            }
-            QTabBar::tab {
+            }            QTabBar::tab {
                 background-color: #e0e0e0;
-                padding: 12px 24px;
+                padding: 16px 28px;
                 margin-right: 3px;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
                 font-weight: bold;
+                font-size: 14px;
             }
             QTabBar::tab:selected {
                 background-color: white;
                 border-bottom: 3px solid #2196F3;
-            }
-            QPushButton {
+            }            QPushButton {
                 background-color: #2196F3;
                 color: white;
                 border: none;
-                padding: 12px 24px;
+                padding: 16px 28px;
                 border-radius: 6px;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 16px;
             }
             QPushButton:hover {
                 background-color: #1976D2;
@@ -437,23 +436,21 @@ class MainWindow(QMainWindow):
             }
             QPushButton#wrongButton:hover {
                 background-color: #da190b;
-            }
-            QGroupBox {
+            }            QGroupBox {
                 font-weight: bold;
                 border: 2px solid #ccc;
                 border-radius: 8px;
                 margin: 8px;
-                padding-top: 15px;
-                font-size: 13px;
+                padding-top: 18px;
+                font-size: 16px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 15px;
                 padding: 0 8px 0 8px;
                 background-color: white;
-            }
-            QLabel {
-                font-size: 12px;
+            }            QLabel {
+                font-size: 16px;
             }
         """
     
@@ -496,28 +493,25 @@ class MainWindow(QMainWindow):
         # === LADO DIREITO: Resultado e Feedback ===
         right_group = QGroupBox("🎯 Resultado e Feedback")
         right_layout = QVBoxLayout(right_group)
-        
-        # Resultado da predicao
+          # Resultado da predicao
         self.prediction_label = QLabel("Desenhe um digito e clique em 'Reconhecer'")
-        self.prediction_label.setFont(QFont("Arial", 28, QFont.Bold))
+        self.prediction_label.setFont(QFont("Arial", 36, QFont.Bold))
         self.prediction_label.setAlignment(Qt.AlignCenter)
         self.prediction_label.setStyleSheet("color: #333; padding: 20px; background-color: #f8f9fa; border-radius: 8px;")
         right_layout.addWidget(self.prediction_label)
-        
-        # Confianca da predicao
+          # Confianca da predicao
         self.confidence_label = QLabel("")
         self.confidence_label.setAlignment(Qt.AlignCenter)
-        self.confidence_label.setFont(QFont("Arial", 14))
+        self.confidence_label.setFont(QFont("Arial", 18))
         right_layout.addWidget(self.confidence_label)
         
         # === SISTEMA DE FEEDBACK ===
         feedback_group = QGroupBox("🎓 Sistema de Aprendizado")
         feedback_layout = QVBoxLayout(feedback_group)
-        
-        # Pergunta para feedback
+          # Pergunta para feedback
         self.feedback_question = QLabel("A predicao esta correta?")
         self.feedback_question.setAlignment(Qt.AlignCenter)
-        self.feedback_question.setFont(QFont("Arial", 14, QFont.Bold))
+        self.feedback_question.setFont(QFont("Arial", 18, QFont.Bold))
         self.feedback_question.setStyleSheet("color: #2196F3; margin: 10px;")
         feedback_layout.addWidget(self.feedback_question)
         
@@ -951,9 +945,8 @@ def main():
     
     # Criar aplicacao
     app = QApplication(sys.argv)
-    
-    # Configurar fonte padrao
-    font = QFont("Arial", 10)
+      # Configurar fonte padrao
+    font = QFont("Arial", 14)
     app.setFont(font)
     
     # Criar e mostrar janela principal
